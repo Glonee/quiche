@@ -473,11 +473,24 @@ impl Handshake {
 
     pub fn set_quic_transport_params(
         &mut self, params: &crate::TransportParams, is_server: bool,
+        extra_params: &[(u64, Vec<u8>)],
     ) -> Result<()> {
-        let mut raw_params = [0; 128];
+        let extra_len = extra_params
+            .iter()
+            .map(|(_, value)| value.len() + 16)
+            .sum::<usize>();
+        let mut raw_params = vec![0; 256 + extra_len];
 
-        let raw_params =
-            crate::TransportParams::encode(params, is_server, &mut raw_params)?;
+        let raw_params = if extra_params.is_empty() {
+            crate::TransportParams::encode(params, is_server, &mut raw_params)?
+        } else {
+            crate::TransportParams::encode_with_extra(
+                params,
+                is_server,
+                extra_params,
+                &mut raw_params,
+            )?
+        };
 
         let rc = unsafe {
             SSL_set_quic_transport_params(
@@ -487,6 +500,28 @@ impl Handshake {
             )
         };
         self.map_result_ssl(rc)
+    }
+
+    #[cfg(feature = "boringssl-boring-crate")]
+    pub fn set_enable_ech_grease(&mut self, enable: bool) {
+        unsafe {
+            SSL_set_enable_ech_grease(self.as_mut_ptr(), i32::from(enable));
+        }
+    }
+
+    #[cfg(feature = "boringssl-boring-crate")]
+    pub fn add_application_settings(
+        &mut self, proto: &[u8], settings: &[u8],
+    ) -> Result<()> {
+        map_result(unsafe {
+            SSL_add_application_settings(
+                self.as_mut_ptr(),
+                proto.as_ptr(),
+                proto.len(),
+                settings.as_ptr(),
+                settings.len(),
+            )
+        })
     }
 
     pub fn quic_transport_params(&self) -> &[u8] {
@@ -1190,11 +1225,20 @@ extern "C" {
         ssl: *mut SSL, params: *const u8, params_len: usize,
     ) -> c_int;
 
+    #[cfg(feature = "boringssl-boring-crate")]
+    fn SSL_add_application_settings(
+        ssl: *mut SSL, proto: *const u8, proto_len: usize, settings: *const u8,
+        settings_len: usize,
+    ) -> c_int;
+
     fn SSL_set_quic_method(
         ssl: *mut SSL, quic_method: *const SSL_QUIC_METHOD,
     ) -> c_int;
 
     fn SSL_set_quic_use_legacy_codepoint(ssl: *mut SSL, use_legacy: c_int);
+
+    #[cfg(feature = "boringssl-boring-crate")]
+    fn SSL_set_enable_ech_grease(ssl: *mut SSL, enable: c_int);
 
     #[cfg(test)]
     fn SSL_set_options(ssl: *mut SSL, opts: u32) -> u32;

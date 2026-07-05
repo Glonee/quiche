@@ -568,6 +568,14 @@ pub struct Config {
 
     application_protos: Vec<Vec<u8>>,
 
+    extra_transport_params: Vec<(u64, Vec<u8>)>,
+
+    #[cfg(feature = "boringssl-boring-crate")]
+    tls_ech_grease: bool,
+
+    #[cfg(feature = "boringssl-boring-crate")]
+    tls_application_settings: Vec<(Vec<u8>, Vec<u8>)>,
+
     grease: bool,
 
     cc_algorithm: CongestionControlAlgorithm,
@@ -650,6 +658,11 @@ impl Config {
             version,
             tls_ctx,
             application_protos: Vec::new(),
+            extra_transport_params: Vec::new(),
+            #[cfg(feature = "boringssl-boring-crate")]
+            tls_ech_grease: false,
+            #[cfg(feature = "boringssl-boring-crate")]
+            tls_application_settings: Vec::new(),
             grease: true,
             cc_algorithm: CongestionControlAlgorithm::CUBIC,
             custom_bbr_params: None,
@@ -888,6 +901,46 @@ impl Config {
         }
 
         self.set_application_protos(&protos_list)
+    }
+
+    /// Adds an extra local transport parameter.
+    ///
+    /// This is intended for applications that need to advertise extension
+    /// transport parameters not yet modeled by quiche.
+    pub fn add_extra_transport_param(
+        &mut self, id: u64, value: &[u8],
+    ) -> Result<()> {
+        if id > octets::MAX_VAR_INT || value.len() > octets::MAX_VAR_INT as usize
+        {
+            return Err(Error::InvalidTransportParam);
+        }
+
+        self.extra_transport_params.push((id, value.to_vec()));
+
+        Ok(())
+    }
+
+    /// Configures whether TLS ECH GREASE is enabled.
+    #[cfg(feature = "boringssl-boring-crate")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "boringssl-boring-crate")))]
+    pub fn set_ech_grease_enabled(&mut self, enabled: bool) {
+        self.tls_ech_grease = enabled;
+    }
+
+    /// Adds TLS application settings for the given ALPN protocol.
+    #[cfg(feature = "boringssl-boring-crate")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "boringssl-boring-crate")))]
+    pub fn add_application_settings(
+        &mut self, proto: &[u8], settings: &[u8],
+    ) -> Result<()> {
+        if proto.is_empty() || proto.len() > u8::MAX as usize {
+            return Err(Error::InvalidState);
+        }
+
+        self.tls_application_settings
+            .push((proto.to_vec(), settings.to_vec()));
+
+        Ok(())
     }
 
     /// Sets the anti-amplification limit factor.
@@ -1377,6 +1430,15 @@ where
 
     /// List of supported application protocols.
     application_protos: Vec<Vec<u8>>,
+
+    /// Extra local transport parameters.
+    extra_transport_params: Vec<(u64, Vec<u8>)>,
+
+    #[cfg(feature = "boringssl-boring-crate")]
+    tls_ech_grease: bool,
+
+    #[cfg(feature = "boringssl-boring-crate")]
+    tls_application_settings: Vec<(Vec<u8>, Vec<u8>)>,
 
     /// Total number of received packets.
     recv_count: usize,
@@ -2096,6 +2158,14 @@ impl<F: BufFactory> Connection<F> {
 
             application_protos: config.application_protos.clone(),
 
+            extra_transport_params: config.extra_transport_params.clone(),
+
+            #[cfg(feature = "boringssl-boring-crate")]
+            tls_ech_grease: config.tls_ech_grease,
+
+            #[cfg(feature = "boringssl-boring-crate")]
+            tls_application_settings: config.tls_application_settings.clone(),
+
             recv_count: 0,
             sent_count: 0,
             lost_count: 0,
@@ -2239,6 +2309,15 @@ impl<F: BufFactory> Connection<F> {
             Some(conn.ids.get_scid(0)?.cid.to_vec().into());
 
         conn.handshake.init(is_server)?;
+
+        #[cfg(feature = "boringssl-boring-crate")]
+        if !is_server {
+            conn.handshake.set_enable_ech_grease(conn.tls_ech_grease);
+
+            for (proto, settings) in &conn.tls_application_settings {
+                conn.handshake.add_application_settings(proto, settings)?;
+            }
+        }
 
         conn.handshake
             .use_legacy_codepoint(config.version != PROTOCOL_VERSION_V1);
@@ -2767,7 +2846,7 @@ impl<F: BufFactory> Connection<F> {
             tls::Handshake::from_ptr(ssl.as_ptr() as _)?
         });
 
-        handshake.set_quic_transport_params(&params, is_server)
+        handshake.set_quic_transport_params(&params, is_server, &[])
     }
 
     /// Sets the `use_initial_max_data_as_flow_control_win` flag during SSL
@@ -7902,6 +7981,7 @@ impl<F: BufFactory> Connection<F> {
         self.handshake.set_quic_transport_params(
             &self.local_transport_params,
             self.is_server,
+            &self.extra_transport_params,
         )
     }
 

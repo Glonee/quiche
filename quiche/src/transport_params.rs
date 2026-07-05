@@ -402,6 +402,13 @@ impl TransportParams {
     pub(crate) fn encode<'a>(
         tp: &TransportParams, is_server: bool, out: &'a mut [u8],
     ) -> Result<&'a mut [u8]> {
+        Self::encode_with_extra(tp, is_server, &[], out)
+    }
+
+    pub(crate) fn encode_with_extra<'a>(
+        tp: &TransportParams, is_server: bool, extra_params: &[(u64, Vec<u8>)],
+        out: &'a mut [u8],
+    ) -> Result<&'a mut [u8]> {
         let mut b = octets::OctetsMut::with_slice(out);
 
         if is_server {
@@ -556,6 +563,13 @@ impl TransportParams {
                 octets::varint_len(max_datagram_frame_size),
             )?;
             b.put_varint(max_datagram_frame_size)?;
+        }
+
+        for (id, value) in extra_params {
+            assert!(*id <= octets::MAX_VAR_INT);
+            assert!(value.len() <= octets::MAX_VAR_INT as usize);
+            TransportParams::encode_param(&mut b, *id, value.len())?;
+            b.put_bytes(value)?;
         }
 
         let out_len = b.off();

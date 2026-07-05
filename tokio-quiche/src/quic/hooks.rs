@@ -53,4 +53,14 @@ pub trait ConnectionHook {
         &self, _qconn: &mut QuicheConnection, _event: &quiche::PathEvent,
     ) {
     }
+
+    /// Constructs an optional client [`SslContextBuilder`].
+    ///
+    /// This is called for client configurations that don't include
+    /// [`TlsCertificatePaths`].
+    fn create_custom_client_ssl_context_builder(
+        &self,
+    ) -> Option<SslContextBuilder> {
+        None
+    }
 }

@@ -31,6 +31,30 @@ use std::time::Duration;
 
 pub use qlog::writer::QlogCompression;
 
+/// TLS application settings for an ALPN protocol.
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+pub struct TlsApplicationSettings {
+    /// ALPN protocol name.
+    pub proto: Vec<u8>,
+
+    /// Serialized application settings.
+    pub settings: Vec<u8>,
+}
+
+impl foundations::settings::Settings for TlsApplicationSettings {}
+
+/// Extra QUIC transport parameter.
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+pub struct ExtraTransportParam {
+    /// Transport parameter identifier.
+    pub id: u64,
+
+    /// Serialized transport parameter value.
+    pub value: Vec<u8>,
+}
+
+impl foundations::settings::Settings for ExtraTransportParam {}
+
 /// QUIC configuration parameters.
 #[serde_as]
 #[settings]
@@ -41,6 +65,24 @@ pub struct QuicSettings {
     /// Defaults to `[b"h3"]`.
     #[serde(skip, default = "QuicSettings::default_alpn")]
     pub alpn: Vec<Vec<u8>>,
+
+    /// Configures whether to enable TLS ECH GREASE.
+    ///
+    /// Defaults to `false`.
+    #[serde(skip, default)]
+    pub tls_ech_grease: bool,
+
+    /// Configures TLS application settings by ALPN protocol.
+    ///
+    /// Defaults to empty.
+    #[serde(skip, default)]
+    pub tls_application_settings: Vec<TlsApplicationSettings>,
+
+    /// Configures extra QUIC transport parameters to advertise.
+    ///
+    /// Defaults to empty.
+    #[serde(skip, default)]
+    pub extra_transport_params: Vec<ExtraTransportParam>,
 
     /// Configures whether to enable DATAGRAM frame support. H3 connections
     /// copy this setting from the underlying QUIC connection.

@@ -123,12 +123,13 @@ impl Config {
 fn make_quiche_config(
     params: &ConnectionParams, should_log_keys: bool,
 ) -> QuicResult<quiche::Config> {
-    let ssl_ctx_builder = params
-        .hooks
-        .connection_hook
-        .as_ref()
-        .zip(params.tls_cert)
-        .and_then(|(hook, tls)| hook.create_custom_ssl_context_builder(tls));
+    let ssl_ctx_builder =
+        params.hooks.connection_hook.as_ref().and_then(|hook| {
+            match params.tls_cert {
+                Some(tls) => hook.create_custom_ssl_context_builder(tls),
+                None => hook.create_custom_client_ssl_context_builder(),
+            }
+        });
 
     let mut config = if let Some(builder) = ssl_ctx_builder {
         quiche::Config::with_boring_ssl_ctx_builder(
@@ -144,6 +145,18 @@ fn make_quiche_config(
     let alpns: Vec<&[u8]> =
         quic_settings.alpn.iter().map(Vec::as_slice).collect();
     config.set_application_protos(&alpns).unwrap();
+
+    for param in &quic_settings.extra_transport_params {
+        config.add_extra_transport_param(param.id, &param.value)?;
+    }
+
+    config.set_ech_grease_enabled(quic_settings.tls_ech_grease);
+    for application_settings in &quic_settings.tls_application_settings {
+        config.add_application_settings(
+            &application_settings.proto,
+            &application_settings.settings,
+        )?;
+    }
 
     if let Some(timeout) = quic_settings.max_idle_timeout {
         let ms = timeout
